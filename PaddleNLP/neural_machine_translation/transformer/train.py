@@ -338,16 +338,20 @@ def prepare_feed_dict_list(data_generator, init_flag, count):
     """
     feed_dict_list = []
     if data_generator is not None:  # use_py_reader == False
+        # print("### data_gen")
         data_input_names = encoder_data_input_fields + \
                     decoder_data_input_fields[:-1] + label_data_input_fields
         data = next(data_generator)
+        # print("### data", data)
         for idx, data_buffer in enumerate(data):
+            # print("### idx", idx)
             data_input_dict, num_token = prepare_batch_input(
                 data_buffer, data_input_names, ModelHyperParams.eos_idx,
                 ModelHyperParams.eos_idx, ModelHyperParams.n_head,
                 ModelHyperParams.d_model)
             feed_dict_list.append(data_input_dict)
     if init_flag:
+        # print("### init")
         for idx in range(count):
             pos_enc_tables = dict()
             for pos_enc_param_name in pos_enc_param_names:
@@ -503,15 +507,16 @@ def train_loop(exe,
     # build_strategy.gradient_scale_strategy = fluid.BuildStrategy.GradientScaleStrategy.Customized
 
     logging.info("begin executor")
-    train_exe = fluid.ParallelExecutor(
-        use_cuda=TrainTaskConfig.use_gpu,
-        loss_name=avg_cost.name,
-        main_program=train_prog,
-        build_strategy=build_strategy,
-        exec_strategy=exec_strategy,
-        num_trainers=nccl2_num_trainers,
-        trainer_id=nccl2_trainer_id)
-
+    # train_exe = fluid.ParallelExecutor(
+    #     use_cuda=TrainTaskConfig.use_gpu,
+    #     loss_name=avg_cost.name,
+    #     main_program=train_prog,
+    #     build_strategy=build_strategy,
+    #     exec_strategy=exec_strategy,
+    #     num_trainers=nccl2_num_trainers,
+    #     trainer_id=nccl2_trainer_id)
+    place = fluid.CUDAPlace(0)
+    train_exe = fluid.Executor(place)
     if args.val_file_pattern is not None:
         test = test_context(exe, train_exe, dev_count)
 
@@ -538,12 +543,17 @@ def train_loop(exe,
         batch_id = 0
         while True:
             try:
+                # print("### dev_count", dev_count)
                 feed_dict_list = prepare_feed_dict_list(data_generator,
                                                         init_flag, dev_count)
-                outs = train_exe.run(
+                # print("### feed_dict_list", len(feed_dict_list), feed_dict_list)
+                feed_dict = None
+                if feed_dict_list:
+                    feed_dict = feed_dict_list[0]
+                outs = train_exe.run(train_prog,
                     fetch_list=[sum_cost.name, token_num.name]
                     if step_idx % args.fetch_steps == 0 else [],
-                    feed=feed_dict_list)
+                    feed=feed_dict)
 
                 if step_idx % args.fetch_steps == 0:
                     sum_cost_val, token_num_val = np.array(outs[0]), np.array(
@@ -570,7 +580,8 @@ def train_loop(exe,
                              np.exp([min(total_avg_cost, 100)]),
                              args.fetch_steps / (time.time() - avg_batch_time)))
                         avg_batch_time = time.time()
-
+                        print("finished 100 iterations.")
+                        exit(0)
                 if step_idx % TrainTaskConfig.save_freq == 0 and step_idx > 0:
                     fluid.io.save_persistables(
                         exe,
@@ -633,7 +644,7 @@ def train(args):
         dev_count = int(os.environ.get('CPU_NUM', multiprocessing.cpu_count()))
     else:
         place = fluid.CUDAPlace(0)
-        dev_count = fluid.core.get_cuda_device_count()
+        dev_count = 1 #fluid.core.get_cuda_device_count()
 
     exe = fluid.Executor(place)
 
