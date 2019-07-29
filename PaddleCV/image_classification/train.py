@@ -192,6 +192,24 @@ def net_config(image, label, model, args):
 
     return avg_cost, acc_top1, acc_top5
 
+def build_train_program(main_prog, startup_prog, args):
+    image_shape = [int(m) for m in args.image_shape.split(",")]
+    model_name = args.model
+    model_list = [m for m in dir(models) if "__" not in m]
+    assert model_name in model_list, "{} is not in lists: {}".format(args.model,
+                                                                     model_list)
+    model = models.__dict__[model_name]()
+    with fluid.program_guard(main_prog, startup_prog):
+        py_reader = fluid.layers.py_reader(
+            capacity=16,
+            shapes=[[-1] + image_shape, [-1, 1]],
+            lod_levels=[0, 0],
+            dtypes=["float32", "int64"],
+            use_double_buffer=True)
+        with fluid.unique_name.guard():
+            image, label = fluid.layers.read_file(py_reader)
+    return py_reader, image, label
+
 
 def build_program(is_train, main_prog, startup_prog, args):
     image_shape = [int(m) for m in args.image_shape.split(",")]
@@ -265,8 +283,7 @@ def train(args):
         startup_prog.random_seed = 1000
         train_prog.random_seed = 1000
 
-    train_py_reader, train_cost, train_acc1, train_acc5, global_lr = build_program(
-        is_train=True,
+    train_py_reader, train_image, train_label = build_train_program(
         main_prog=train_prog,
         startup_prog=startup_prog,
         args=args)
@@ -327,18 +344,20 @@ def train(args):
     if not use_ngraph:
         train_exe = fluid.ParallelExecutor(
             main_program=train_prog,
-            use_cuda=bool(args.use_gpu),
-            loss_name=train_cost.name)
+            use_cuda=bool(args.use_gpu))
+#            loss_name=train_cost.name)
     else:
         train_exe = exe
 
     train_fetch_list = [
-        train_cost.name, train_acc1.name, train_acc5.name, global_lr.name
+#        train_cost.name, train_acc1.name, train_acc5.name, global_lr.name
+        train_label.name
     ]
     test_fetch_list = [test_cost.name, test_acc1.name, test_acc5.name]
 
     params = models.__dict__[args.model]().params
-    for pass_id in range(params["num_epochs"]):
+    #for pass_id in range(params["num_epochs"]):
+    for pass_id in range(args.num_epochs):
 
         train_py_reader.start()
 
@@ -350,24 +369,25 @@ def train(args):
             while True:
                 t1 = time.time()
 
-                if use_ngraph:
-                    loss, acc1, acc5, lr = train_exe.run(
-                        train_prog, fetch_list=train_fetch_list)
-                else:
-                    loss, acc1, acc5, lr = train_exe.run(
-                        fetch_list=train_fetch_list)
+                # if use_ngraph:
+                    # loss, acc1, acc5, lr = train_exe.run(
+                        # train_prog, fetch_list=train_fetch_list)
+                # else:
+                    # loss, acc1, acc5, lr = train_exe.run(
+                    #     fetch_list=train_fetch_list)
+                labels = train_exe.run(fetch_list=train_fetch_list)
                 t2 = time.time()
                 period = t2 - t1
-                loss = np.mean(np.array(loss))
-                acc1 = np.mean(np.array(acc1))
-                acc5 = np.mean(np.array(acc5))
+                loss = 0 #np.mean(np.array(loss))
+                acc1 = 0 #np.mean(np.array(acc1))
+                acc5 = 0 #np.mean(np.array(acc5))
                 train_info[0].append(loss)
                 train_info[1].append(acc1)
                 train_info[2].append(acc5)
-                lr = np.mean(np.array(lr))
+                lr = 0 #np.mean(np.array(lr))
                 train_time.append(period)
 
-                if batch_id % 10 == 0:
+                if True: #batch_id % 10 == 0:
                     print("Pass {0}, trainbatch {1}, loss {2}, \
                         acc1 {3}, acc5 {4}, lr {5}, time {6}"
                           .format(pass_id, batch_id, "%.5f"%loss, "%.5f"%acc1, "%.5f"%acc5, "%.5f" %
@@ -383,36 +403,36 @@ def train(args):
         train_speed = np.array(train_time).mean() / (train_batch_size *
                                                      device_num)
 
-        test_py_reader.start()
+        # test_py_reader.start()
 
-        test_batch_id = 0
-        try:
-            while True:
-                t1 = time.time()
-                loss, acc1, acc5 = exe.run(program=test_prog,
-                                           fetch_list=test_fetch_list)
-                t2 = time.time()
-                period = t2 - t1
-                loss = np.mean(loss)
-                acc1 = np.mean(acc1)
-                acc5 = np.mean(acc5)
-                test_info[0].append(loss)
-                test_info[1].append(acc1)
-                test_info[2].append(acc5)
-                if test_batch_id % 10 == 0:
-                    print("Pass {0},testbatch {1},loss {2}, \
-                        acc1 {3},acc5 {4},time {5}"
-                          .format(pass_id, test_batch_id, "%.5f"%loss,"%.5f"%acc1, "%.5f"%acc5,
-                                  "%2.2f sec" % period))
-                    sys.stdout.flush()
-                test_batch_id += 1
-        except fluid.core.EOFException:
-            test_py_reader.reset()
+        # test_batch_id = 0
+        # try:
+        #     while True:
+        #         t1 = time.time()
+        #         loss, acc1, acc5 = exe.run(program=test_prog,
+        #                                    fetch_list=test_fetch_list)
+        #         t2 = time.time()
+        #         period = t2 - t1
+        #         loss = np.mean(loss)
+        #         acc1 = np.mean(acc1)
+        #         acc5 = np.mean(acc5)
+        #         test_info[0].append(loss)
+        #         test_info[1].append(acc1)
+        #         test_info[2].append(acc5)
+        #         if test_batch_id % 10 == 0:
+        #             print("Pass {0},testbatch {1},loss {2}, \
+        #                 acc1 {3},acc5 {4},time {5}"
+        #                   .format(pass_id, test_batch_id, "%.5f"%loss,"%.5f"%acc1, "%.5f"%acc5,
+        #                           "%2.2f sec" % period))
+        #             sys.stdout.flush()
+        #         test_batch_id += 1
+        # except fluid.core.EOFException:
+        #     test_py_reader.reset()
 
-        test_loss = np.array(test_info[0]).mean()
-        test_acc1 = np.array(test_info[1]).mean()
-        test_acc5 = np.array(test_info[2]).mean()
-
+        # test_loss = np.array(test_info[0]).mean()
+        # test_acc1 = np.array(test_info[1]).mean()
+        # test_acc5 = np.array(test_info[2]).mean()
+'''
         print("End pass {0}, train_loss {1}, train_acc1 {2}, train_acc5 {3}, "
               "test_loss {4}, test_acc1 {5}, test_acc5 {6}".format(
                   pass_id, "%.5f"%train_loss, "%.5f"%train_acc1, "%.5f"%train_acc5, "%.5f"%test_loss,
@@ -449,6 +469,7 @@ def train(args):
                 print("kpis	test_acc_top1_card%s	%s" % (device_num, test_acc1))
                 print("kpis	test_acc_top5_card%s	%s" % (device_num, test_acc5))
                 print("kpis	train_speed_card%s	%s" % (device_num, train_speed))
+                '''
 
 
 def main():

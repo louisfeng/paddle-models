@@ -98,7 +98,8 @@ def distort_color(img):
 
 def process_image(sample, mode, color_jitter, rotate):
     img_path = sample[0]
-
+    #print(img_path)
+    print("sample: ", sample, " mode: ", mode, " color_jitter: ", color_jitter, " rotate: ", rotate)
     img = Image.open(img_path)
     if mode == 'train':
         if rotate: img = rotate_image(img)
@@ -113,12 +114,12 @@ def process_image(sample, mode, color_jitter, rotate):
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
 
     if img.mode != 'RGB':
+        print("CONVERT RGB")
         img = img.convert('RGB')
 
     img = np.array(img).astype('float32').transpose((2, 0, 1)) / 255
     img -= img_mean
     img /= img_std
-
     if mode == 'train' or mode == 'val':
         return img, sample[1]
     elif mode == 'test':
@@ -132,6 +133,10 @@ def _reader_creator(file_list,
                     rotate=False,
                     data_dir=DATA_DIR,
                     pass_id_as_seed=0):
+    if rotate: 
+        print("rotate: TRUE")
+    else:
+        print("rotate: FALSE")
     def reader():
         with open(file_list) as flist:
             full_lines = [line.strip() for line in flist]
